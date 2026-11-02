@@ -1,0 +1,11 @@
+python-dotenv
+langchain
+langchain-openai
+langchain-chroma
+langchain-huggingface
+sentence-transformers
+streamlit
+pdfplumber
+python-docx
+openpyxl
+python-pptx
