@@ -20,13 +20,11 @@ from ai.task_extraction import extract_tasks_from_email, is_task_extraction_requ
 from integrations.mail.fetch_mail import mailbox_dirs
 from integrations.notion.mcp_client import NotionMcpClient
 from integrations.notion.tasks import (
-    STATUS_OPTIONS,
     check_task_duplicates,
     create_database,
     create_task,
     load_config as load_notion_config,
     query_tasks,
-    update_task_status,
 )
 from services.ingest import embedding, ingest_mailbox
 
@@ -88,7 +86,7 @@ def render_notion_sidebar():
                 with st.spinner("Notion 업무를 불러오는 중..."):
                     st.session_state.notion_task_rows = query_tasks(
                         NotionMcpClient(),
-                        config["data_source_id"],
+                        config.get("view_url"),
                     )
                 st.session_state.notion_message = "Notion 업무를 조회했습니다."
                 st.session_state.notion_message_is_error = False
@@ -105,45 +103,6 @@ def render_notion_sidebar():
                     )
                     if task_row.get("url"):
                         st.link_button("Notion에서 열기", task_row["url"])
-
-            selectable_rows = [row for row in task_rows if row.get("page_id")]
-            if selectable_rows:
-                page_ids = [row["page_id"] for row in selectable_rows]
-                selected_page_id = st.selectbox(
-                    "상태를 변경할 업무",
-                    page_ids,
-                    format_func=lambda page_id: next(
-                        row.get("task_title") or page_id
-                        for row in selectable_rows
-                        if row["page_id"] == page_id
-                    ),
-                    key="notion_status_page",
-                )
-                new_status = st.selectbox(
-                    "새 상태",
-                    STATUS_OPTIONS,
-                    key="notion_new_status",
-                )
-                if st.button("상태 변경", icon="↻", key="notion_update_status"):
-                    try:
-                        with st.spinner("Notion 상태를 변경하고 있습니다..."):
-                            update_task_status(
-                                NotionMcpClient(),
-                                selected_page_id,
-                                new_status,
-                            )
-                        st.session_state.notion_task_rows = [
-                            {
-                                **row,
-                                "status": new_status,
-                            }
-                            if row.get("page_id") == selected_page_id
-                            else row
-                            for row in task_rows
-                        ]
-                        st.success("업무 상태를 변경했습니다.")
-                    except Exception as error:
-                        st.error(f"상태 변경에 실패했습니다: {error}")
         elif "notion_task_rows" in st.session_state:
             st.info("조회된 업무가 없습니다.")
 
@@ -274,7 +233,7 @@ def render_task_results(message, message_index):
                 with st.spinner("Notion에서 같은 업무를 확인하고 있습니다..."):
                     matches = check_task_duplicates(
                         NotionMcpClient(),
-                        config["data_source_id"],
+                        config.get("view_url"),
                         task,
                     )
                 st.session_state[duplicate_key] = matches
@@ -301,7 +260,7 @@ def render_task_results(message, message_index):
                         result = create_task(
                             NotionMcpClient(),
                             config["database_id"],
-                            config["data_source_id"],
+                            config.get("view_url"),
                             task,
                         )
                     if result["created"]:

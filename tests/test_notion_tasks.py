@@ -86,6 +86,18 @@ class NotionTaskMappingTests(unittest.TestCase):
         self.assertEqual(task["due_date"], "2026-12-01")
         self.assertEqual(task["page_id"], "page-1")
 
+    def test_normalizes_view_rows_with_page_url_and_expanded_date(self):
+        task = normalize_task_row({
+            "업무명": "부서 검색",
+            "상태": "미착수",
+            "date:마감일:start": "2026-12-01",
+            "url": "https://app.notion.com/p/page-1",
+        })
+
+        self.assertEqual(task["task_title"], "부서 검색")
+        self.assertEqual(task["due_date"], "2026-12-01")
+        self.assertEqual(task["page_id"], "page-1")
+
     def test_rejects_unknown_status_before_calling_mcp(self):
         class FakeClient:
             def call_tool(self, name, arguments):
@@ -109,7 +121,7 @@ class NotionTaskMappingTests(unittest.TestCase):
         result = create_task(
             client,
             "database-id",
-            "data-source-id",
+            "https://notion.so/database-id?v=view-id",
             {"task_title": "새 업무", "source_email": "mail-id"},
         )
 
@@ -117,7 +129,11 @@ class NotionTaskMappingTests(unittest.TestCase):
         self.assertEqual(client.calls[0][0], "notion-query-data-sources")
         self.assertEqual(
             client.calls[0][1]["data"]["mode"],
-            "rows",
+            "view",
+        )
+        self.assertEqual(
+            client.calls[0][1]["data"]["view_url"],
+            "https://notion.so/database-id?v=view-id",
         )
         self.assertEqual(client.calls[1][0], "notion-create-pages")
         self.assertEqual(
@@ -143,7 +159,7 @@ class NotionTaskMappingTests(unittest.TestCase):
         result = create_task(
             client,
             "database-id",
-            "data-source-id",
+            "https://notion.so/database-id?v=view-id",
             {"task_title": "이미 있는 업무"},
         )
 
@@ -153,8 +169,8 @@ class NotionTaskMappingTests(unittest.TestCase):
     def test_create_database_persists_nested_database_and_data_source_ids(self):
         class FakeClient:
             def call_tool(self, name, arguments):
-                self.name = name
-                self.arguments = arguments
+                if name == "notion-create-database":
+                    self.arguments = arguments
                 return {
                     "database": {
                         "id": "database-id",
@@ -184,7 +200,7 @@ class NotionTaskMappingTests(unittest.TestCase):
                     "text": (
                         '<database url="https://app.notion.com/p/database-1" '
                         'data-source-url="collection://source-1" inline="false">'
-                        "메일 업무"
+                        '메일 업무<views><view url="{{view://view-1}}">Default</view></views>'
                         "</database>"
                     )
                 }
@@ -196,6 +212,10 @@ class NotionTaskMappingTests(unittest.TestCase):
 
         self.assertEqual(config["database_id"], "database-1")
         self.assertEqual(config["data_source_id"], "source-1")
+        self.assertEqual(
+            config["view_url"],
+            "https://app.notion.com/p/database-1?v=view-1",
+        )
 
 
 if __name__ == "__main__":

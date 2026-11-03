@@ -1,12 +1,11 @@
 import json
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from config.paths import NOTION_CONFIG_PATH
 
 
 CONFIG_PATH = NOTION_CONFIG_PATH
-DATA_SOURCE_URL_PREFIX = "collection://"
 STATUS_OPTIONS = ("미착수", "진행 중", "완료", "보류")
 PROPERTY_NAMES = {
     "task_title": "업무명",
@@ -139,8 +138,10 @@ def task_page_properties(task, status="미착수"):
     return properties
 
 
-def _read_property(row, property_name):
+def _read_property(row, property_name, fallback_property_name=None):
     value = row.get(property_name)
+    if value is None and fallback_property_name:
+        value = row.get(fallback_property_name)
     if isinstance(value, dict):
         for key in ("title", "rich_text", "select", "status", "date", "number", "people"):
             nested = value.get(key)
@@ -155,10 +156,19 @@ def _read_property(row, property_name):
 
 def normalize_task_row(row):
     normalized = {
-        key: _read_property(row, property_name)
+        key: _read_property(
+            row,
+            property_name,
+            f"date:{property_name}:start" if key == "due_date" else None,
+        )
         for key, property_name in PROPERTY_NAMES.items()
     }
-    normalized["page_id"] = row.get("id") or row.get("page_id")
+    page_url = row.get("url")
+    normalized["page_id"] = (
+        row.get("id")
+        or row.get("page_id")
+        or (urlparse(page_url).path.rstrip("/").split("/")[-1] if page_url else None)
+    )
     normalized["url"] = row.get("url")
     return normalized
 
@@ -185,37 +195,65 @@ def _call_tool(client, tool_name, arguments):
     return _tool_payload(client.call_tool(tool_name, arguments))
 
 
+def _view_url_from_database(client, database_id, database_url=None):
+    response = _call_tool(client, "notion-fetch", {"id": database_id})
+    text = response.get("text", "")
+    view_match = re.search(r'<view\s+url="\{\{view://([^}]+)\}\}">', text)
+    if not view_match:
+        return None
+
+    database_url = response.get("url") or database_url
+    if not database_url:
+        return None
+    parsed_url = urlparse(database_url)
+    query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+    query["v"] = view_match.group(1)
+    return urlunparse(
+        (parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", urlencode(query), "")
+    )
+
+
 def _database_ids_from_parent(client, parent_page_id, title):
     response = _call_tool(client, "notion-fetch", {"id": parent_page_id})
     text = response.get("text", "")
     database_entries = re.findall(
-        r'<database\s+url="([^"]+)"\s+data-source-url="collection://([^"]+)"[^>]*>\s*(.*?)\s*</database>',
+        r'<database\s+url="([^"]+)"\s+data-source-url="collection://([^"]+)"[^>]*>(.*?)</database>',
         text,
         flags=re.DOTALL,
     )
     matches = [
-        (database_url, data_source_id, database_title.strip())
-        for database_url, data_source_id, database_title in database_entries
-        if database_title.strip() == title
+        (database_url, data_source_id, database_content)
+        for database_url, data_source_id, database_content in database_entries
+        if re.search(rf"(?:^|>)\s*{re.escape(title)}\s*(?:<|$)", database_content)
     ]
     if len(matches) != 1:
         return None
-    database_url, data_source_id, _ = matches[0]
+    database_url, data_source_id, database_content = matches[0]
     database_id = urlparse(database_url).path.rstrip("/").split("/")[-1]
-    return database_id, data_source_id, database_url
+    view_match = re.search(r'<view\s+url="\{\{view://([^}]+)\}\}">', database_content)
+    if not view_match:
+        return None
+    parsed_url = urlparse(database_url)
+    query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+    query["v"] = view_match.group(1)
+    view_url = urlunparse(
+        (parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", urlencode(query), "")
+    )
+    return database_id, data_source_id, database_url, view_url
 
 
 def attach_existing_database(client, parent_page_id, title="메일 업무"):
     database_ids = _database_ids_from_parent(client, parent_page_id, title)
     if database_ids is None:
         raise ValueError(f"부모 페이지에서 '{title}' 데이터베이스를 유일하게 찾지 못했습니다.")
-    database_id, data_source_id, database_url = database_ids
+    database_id, data_source_id, database_url, view_url = database_ids
     config = load_config()
     config.update({
         "parent_page_id": parent_page_id,
         "database_id": database_id,
         "data_source_id": data_source_id,
         "database_url": database_url,
+        "view_url": view_url,
         "properties": PROPERTY_NAMES,
     })
     save_config(config)
@@ -242,34 +280,50 @@ def create_database(client, parent_page_id, title="메일 업무"):
     )
     database_id = response.get("database_id") or response.get("id") or database.get("id")
     database_url = response.get("url") or database.get("url")
-    if not data_source_id:
-        recovered = _database_ids_from_parent(client, parent_page_id, title)
-        if recovered is None:
-            raise ValueError("Notion DB 생성 후 부모 페이지에서 database ID를 찾지 못했습니다.")
-        recovered_database_id, data_source_id, recovered_url = recovered
+    recovered = _database_ids_from_parent(client, parent_page_id, title)
+    if recovered is None and (not database_id or not data_source_id):
+        raise ValueError("Notion DB 생성 후 database view 정보를 찾지 못했습니다.")
+    if recovered:
+        recovered_database_id, recovered_data_source_id, recovered_url, view_url = recovered
         database_id = database_id or recovered_database_id
+        data_source_id = data_source_id or recovered_data_source_id
         database_url = database_url or recovered_url
+    else:
+        view_url = None
     config = load_config()
     config.update({
         "parent_page_id": parent_page_id,
         "data_source_id": data_source_id,
         "database_id": database_id,
         "database_url": database_url,
+        "view_url": view_url,
         "properties": PROPERTY_NAMES,
     })
     save_config(config)
     return response
 
 
-def query_tasks(client, data_source_id, limit=100):
+def query_tasks(client, view_url, limit=100):
+    if not view_url:
+        config = load_config()
+        view_url = _view_url_from_database(
+            client,
+            config.get("database_id"),
+            config.get("database_url"),
+        )
+        if not view_url:
+            raise ValueError("Notion DB의 기본 view URL을 찾지 못했습니다.")
+        config["view_url"] = view_url
+        save_config(config)
+
     response = _call_tool(
         client,
         "notion-query-data-sources",
         {
             "data": {
-                "mode": "rows",
-                "data_source_url": f"{DATA_SOURCE_URL_PREFIX}{data_source_id}",
-                "limit": min(max(int(limit), 1), 100),
+                "mode": "view",
+                "view_url": view_url,
+                "page_size": min(max(int(limit), 1), 100),
             },
         },
     )
@@ -277,12 +331,12 @@ def query_tasks(client, data_source_id, limit=100):
     return [normalize_task_row(row) for row in rows]
 
 
-def check_task_duplicates(client, data_source_id, task):
-    return find_duplicate_tasks(task, query_tasks(client, data_source_id))
+def check_task_duplicates(client, view_url, task):
+    return find_duplicate_tasks(task, query_tasks(client, view_url))
 
 
-def create_task(client, database_id, data_source_id, task):
-    duplicates = check_task_duplicates(client, data_source_id, task)
+def create_task(client, database_id, view_url, task):
+    duplicates = check_task_duplicates(client, view_url, task)
     if duplicates:
         return {"created": False, "duplicates": duplicates}
 
