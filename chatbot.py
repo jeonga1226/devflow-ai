@@ -19,10 +19,137 @@ from attachment_analysis import (
 )
 from fetch_mail import mailbox_dirs
 from task_extraction import extract_tasks_from_email, is_task_extraction_request
+from notion_mcp_client import NotionMcpClient
+from notion_tasks import (
+    STATUS_OPTIONS,
+    check_task_duplicates,
+    create_database,
+    create_task,
+    load_config as load_notion_config,
+    query_tasks,
+    update_task_status,
+)
 
 load_dotenv()
 
+
+def render_notion_sidebar():
+    config = load_notion_config()
+    with st.sidebar:
+        st.header("Notion 업무")
+        if st.button("Notion 연결 확인", icon="🔗", key="notion_connect"):
+            try:
+                with st.spinner("Notion에 연결하고 있습니다..."):
+                    result = NotionMcpClient().call_tool("notion-get-self", {})
+                st.session_state.notion_message = (
+                    "Notion 연결이 확인되었습니다."
+                    if result
+                    else "Notion 연결은 되었지만 계정 정보를 받지 못했습니다."
+                )
+                st.session_state.notion_message_is_error = False
+            except Exception as error:
+                st.session_state.notion_message = str(error)
+                st.session_state.notion_message_is_error = True
+
+        if st.session_state.get("notion_message"):
+            if st.session_state.get("notion_message_is_error"):
+                st.error(st.session_state.notion_message)
+            else:
+                st.success(st.session_state.notion_message)
+
+        parent_page_id = st.text_input(
+            "업무 DB를 만들 페이지 ID",
+            value=config.get("parent_page_id")
+            or os.getenv("NOTION_PARENT_PAGE_ID", ""),
+            key="notion_parent_page_id",
+        )
+
+        if not config.get("data_source_id"):
+            st.caption("업무 데이터베이스가 아직 연결되지 않았습니다.")
+            if st.button("메일 업무 DB 생성", icon="➕", key="notion_create_database"):
+                try:
+                    with st.spinner("Notion 업무 DB를 생성하고 있습니다..."):
+                        create_database(
+                            NotionMcpClient(),
+                            parent_page_id.strip(),
+                        )
+                    st.session_state.notion_message = "메일 업무 DB를 생성했습니다."
+                    st.session_state.notion_message_is_error = False
+                    st.rerun()
+                except Exception as error:
+                    st.error(f"Notion DB 생성에 실패했습니다: {error}")
+            return
+
+        st.caption("업무 데이터베이스 연결됨")
+        if config.get("database_url"):
+            st.link_button("Notion DB 열기", config["database_url"])
+        if st.button("업무 조회", icon="🔎", key="notion_query_tasks"):
+            try:
+                with st.spinner("Notion 업무를 불러오는 중..."):
+                    st.session_state.notion_task_rows = query_tasks(
+                        NotionMcpClient(),
+                        config["data_source_id"],
+                    )
+                st.session_state.notion_message = "Notion 업무를 조회했습니다."
+                st.session_state.notion_message_is_error = False
+            except Exception as error:
+                st.error(f"Notion 업무 조회에 실패했습니다: {error}")
+
+        task_rows = st.session_state.get("notion_task_rows", [])
+        if task_rows:
+            for task_row in task_rows:
+                with st.expander(task_row.get("task_title") or "(제목 없음)"):
+                    st.caption(
+                        f"상태: {task_row.get('status') or '미착수'} · "
+                        f"프로젝트: {task_row.get('project') or '미지정'}"
+                    )
+                    if task_row.get("url"):
+                        st.link_button("Notion에서 열기", task_row["url"])
+
+            selectable_rows = [row for row in task_rows if row.get("page_id")]
+            if selectable_rows:
+                page_ids = [row["page_id"] for row in selectable_rows]
+                selected_page_id = st.selectbox(
+                    "상태를 변경할 업무",
+                    page_ids,
+                    format_func=lambda page_id: next(
+                        row.get("task_title") or page_id
+                        for row in selectable_rows
+                        if row["page_id"] == page_id
+                    ),
+                    key="notion_status_page",
+                )
+                new_status = st.selectbox(
+                    "새 상태",
+                    STATUS_OPTIONS,
+                    key="notion_new_status",
+                )
+                if st.button("상태 변경", icon="↻", key="notion_update_status"):
+                    try:
+                        with st.spinner("Notion 상태를 변경하고 있습니다..."):
+                            update_task_status(
+                                NotionMcpClient(),
+                                selected_page_id,
+                                new_status,
+                            )
+                        st.session_state.notion_task_rows = [
+                            {
+                                **row,
+                                "status": new_status,
+                            }
+                            if row.get("page_id") == selected_page_id
+                            else row
+                            for row in task_rows
+                        ]
+                        st.success("업무 상태를 변경했습니다.")
+                    except Exception as error:
+                        st.error(f"상태 변경에 실패했습니다: {error}")
+        elif "notion_task_rows" in st.session_state:
+            st.info("조회된 업무가 없습니다.")
+
+
 st.title("그룹웨어 메일 챗봇")
+render_notion_sidebar()
 
 if "mailbox" not in st.session_state:
     st.session_state.mailbox = None
@@ -122,12 +249,68 @@ def load_task_sources(search_message):
     return sources
 
 
-def render_task_results(message):
+def render_task_results(message, message_index):
     if not message.get("task_extraction"):
         return
     tasks = message.get("tasks", [])
     st.markdown("**메일에서 추출한 업무 JSON**")
-    st.json(tasks[0] if len(tasks) == 1 else tasks)
+    if not tasks:
+        st.json([])
+        return
+
+    config = load_notion_config()
+    for task_index, task in enumerate(tasks):
+        st.json(task)
+        duplicate_key = f"notion_duplicates_{message_index}_{task_index}"
+        if st.button(
+            "Notion 중복 확인",
+            key=f"notion_check_duplicate_{message_index}_{task_index}",
+            icon="🔎",
+        ):
+            try:
+                if not config.get("data_source_id"):
+                    raise ValueError("사이드바에서 먼저 Notion 업무 DB를 생성하세요.")
+                with st.spinner("Notion에서 같은 업무를 확인하고 있습니다..."):
+                    matches = check_task_duplicates(
+                        NotionMcpClient(),
+                        config["data_source_id"],
+                        task,
+                    )
+                st.session_state[duplicate_key] = matches
+            except Exception as error:
+                st.error(f"중복 확인에 실패했습니다: {error}")
+
+        if duplicate_key in st.session_state:
+            duplicates = st.session_state[duplicate_key]
+            if duplicates:
+                st.warning("같은 제목의 업무가 이미 등록되어 있습니다.")
+                for duplicate in duplicates:
+                    title = duplicate.get("task_title") or "(제목 없음)"
+                    if duplicate.get("url"):
+                        st.markdown(f"- [{title}]({duplicate['url']})")
+                    else:
+                        st.markdown(f"- {title}")
+            elif st.button(
+                "Notion에 신규 업무 등록",
+                key=f"notion_register_task_{message_index}_{task_index}",
+                icon="➕",
+            ):
+                try:
+                    with st.spinner("Notion에 업무를 등록하고 있습니다..."):
+                        result = create_task(
+                            NotionMcpClient(),
+                            config["database_id"],
+                            config["data_source_id"],
+                            task,
+                        )
+                    if result["created"]:
+                        st.success("Notion에 업무를 등록했습니다.")
+                        st.session_state.pop(duplicate_key, None)
+                    else:
+                        st.session_state[duplicate_key] = result["duplicates"]
+                        st.warning("등록 직전 중복 업무가 발견되어 등록을 중단했습니다.")
+                except Exception as error:
+                    st.error(f"Notion 업무 등록에 실패했습니다: {error}")
 
 
 def render_search_results(message, search_id):
@@ -198,7 +381,7 @@ if "messages" not in st.session_state.keys():
 for message_index, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         if message.get("task_extraction"):
-            render_task_results(message)
+            render_task_results(message, message_index)
         elif message.get("attachment_chunks"):
             render_attachment_results(message)
         else:
@@ -256,7 +439,7 @@ if st.session_state.messages[-1]["role"] != "assistant":
                         "task_extraction": True,
                         "tasks": tasks,
                     }
-                    render_task_results(new_ai_message)
+                    render_task_results(new_ai_message, len(st.session_state.messages))
                 except Exception as error:
                     message_text = f"업무 추출에 실패했습니다: {error}"
                     st.error(message_text)

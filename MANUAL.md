@@ -6,16 +6,16 @@
 
 ## 2. 준비 사항
 
-- Python 실행 환경
+- Python 3.10 이상 실행 환경 (Notion MCP SDK 요구사항)
 - 그룹웨어의 IMAP 서버 주소, 계정, 비밀번호 및 접근 권한
 - OpenAI API 키
 - 최초 설치 및 모델 다운로드를 위한 인터넷 연결
 
-저장소에는 Python 버전이 별도로 고정되어 있지 않습니다. macOS 터미널에서 프로젝트 루트로 이동한 뒤 가상 환경을 만들고 의존성을 설치합니다.
+macOS 터미널에서 프로젝트 루트로 이동한 뒤 Python 3.10 이상으로 가상 환경을 만들고 의존성을 설치합니다. 기존 가상 환경이 Python 3.9라면 기존 환경을 덮어쓰지 말고 새 환경을 만드세요.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3.13 -m venv .venv-mcp
+source .venv-mcp/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
@@ -31,9 +31,10 @@ GROUPWARE_EMAIL=user@example.com
 GROUPWARE_PASSWORD=your-groupware-password
 GROUPWARE_MAILBOX=INBOX
 OPENAI_API_KEY=your-openai-api-key
+NOTION_PARENT_PAGE_ID=your-normal-notion-page-id
 ```
 
-`GROUPWARE_IMAP_PORT`는 생략하면 `993`, `GROUPWARE_MAILBOX`는 생략하면 `INBOX`를 사용합니다. 나머지 IMAP 접속 값과 `OPENAI_API_KEY`는 반드시 유효한 값이어야 합니다. 실제 메일 계정 및 API 키를 문서나 소스 저장소에 올리지 마세요.
+`GROUPWARE_IMAP_PORT`는 생략하면 `993`, `GROUPWARE_MAILBOX`는 생략하면 `INBOX`를 사용합니다. `NOTION_PARENT_PAGE_ID`는 업무 DB를 생성할 일반 페이지 ID이며 데이터베이스 ID는 사용할 수 없습니다. 실제 메일 계정과 API 키는 문서나 소스 저장소에 올리지 마세요.
 
 ## 4. 실행 방법
 
@@ -64,6 +65,8 @@ python ingest.py       # 기본 메일함을 가져온 뒤 벡터 DB 생성
 
 첨부파일 상세 검색도 채팅으로 질문할 수 있습니다. 검색된 메일에 첨부가 있으면 화면에서 검색 질문을 안내하며, 다음 메시지가 첨부파일 검색어로 사용됩니다. 지원 파일 형식은 PDF, DOCX, XLSX, PPTX, CSV, TXT입니다.
 
+Streamlit 사이드바의 **Notion 업무**에서 공식 Remote Notion MCP 연결을 확인하고, 지정된 페이지 아래 **메일 업무** 데이터베이스를 생성할 수 있습니다. 최초 연결 시 브라우저에서 Notion OAuth 승인을 완료합니다. OAuth 토큰과 클라이언트 정보는 macOS Keychain에 저장되며 프로젝트 파일에는 기록되지 않습니다. 업무 DB ID는 로컬 `.notion_config.json`에 저장되고 Git에서 제외됩니다. 업무 조회, 등록 전 중복 확인, 신규 등록, 상태 변경은 해당 사이드바에서 수행합니다. 추출 결과의 **중복 확인**을 누르면 기존 업무와 비교하고, 중복이 없을 때만 등록 버튼이 표시됩니다. 등록 시에도 서버를 다시 조회해 중복을 검사합니다.
+
 메일함 이름을 디렉터리 이름으로 사용할 때 영문자, 숫자, `_`, `-` 이외의 문자는 `_`로 바뀝니다. 따라서 서로 다른 메일함 이름이 같은 저장 폴더명으로 변환되지 않는지 유의하세요.
 
 ## 6. 동작상 유의 사항
@@ -71,6 +74,7 @@ python ingest.py       # 기본 메일함을 가져온 뒤 벡터 DB 생성
 - 이미 JSON 파일이 있는 UID는 다시 가져오지 않습니다. 서버에서 삭제되거나 수정된 메일도 로컬 JSON에서는 자동 삭제·갱신되지 않습니다.
 - 인덱스 생성 시 해당 메일함의 기존 Chroma 폴더를 지우고, 로컬에 저장된 JSON 전체를 기준으로 다시 만듭니다. 로컬에 남아 있는 메일은 계속 검색 대상이 됩니다.
 - 메일 검색 인덱스에는 메일 본문만 포함됩니다. 첨부파일 상세 검색 또는 업무 추출을 요청할 때 로컬에서 분석하며, 현재 지원 형식은 PDF, DOCX, XLSX, PPTX, CSV, TXT입니다.
+- 공식 MCP SDK가 Python 3.10 이상을 요구합니다. Python 3.9 가상 환경에서는 Notion 기능을 사용할 수 없으므로 새 Python 환경에서 앱을 실행해야 합니다.
 - 로컬 추출은 파일 크기 25 MiB, PDF 100페이지, 표/시트별 250행 및 30열 등의 상한이 있습니다. 스캔 이미지 PDF의 OCR 및 구형 DOC/XLS 형식은 지원하지 않습니다.
 - 본문이 비어 있는 메일은 JSON으로 저장하지 않습니다. 첨부파일만 있는 메일은 검색되지 않습니다.
 - 답변 프롬프트는 검색된 메일 정보만 사용하도록 구성되어 있지만, 검색 결과가 부족하면 정확한 답을 얻지 못할 수 있습니다. 중요한 정보는 참고 메일을 열어 원문과 대조하세요.
@@ -78,7 +82,7 @@ python ingest.py       # 기본 메일함을 가져온 뒤 벡터 DB 생성
 
 ## 7. 개인정보 및 보안
 
-메일 JSON, 첨부파일, 벡터 DB에는 업무상 민감한 정보가 포함될 수 있습니다. 이 데이터는 프로젝트의 `data/`와 `chroma_db/`에 로컬 파일로 저장되므로 접근 권한과 백업·삭제 정책을 관리하세요. 메일 질문의 검색 문맥은 답변 생성을 위해 OpenAI API로 전송됩니다. 첨부 상세 검색 시 질문과 관련 청크가, 업무 추출 시 검색된 메일 원문과 추출 가능한 첨부 텍스트가 OpenAI API로 전송됩니다. 조직의 데이터 처리 정책과 OpenAI 사용 허용 범위를 확인한 뒤 운영 환경에 적용하세요.
+메일 JSON, 첨부파일, 벡터 DB에는 업무상 민감한 정보가 포함될 수 있습니다. 이 데이터는 프로젝트의 `data/`와 `chroma_db/`에 로컬 파일로 저장되므로 접근 권한과 백업·삭제 정책을 관리하세요. 메일 질문의 검색 문맥은 답변 생성을 위해 OpenAI API로 전송됩니다. 첨부 상세 검색 시 질문과 관련 청크가, 업무 추출 시 검색된 메일 원문과 추출 가능한 첨부 텍스트가 OpenAI API로 전송됩니다. Notion MCP로 업무를 등록·수정하면 업무 속성이 Notion에 저장됩니다. 조직의 데이터 처리 정책과 외부 전송 허용 범위를 확인하세요.
 
 ## 8. 문제 해결
 

@@ -1,11 +1,13 @@
 python-dotenv
-langchain
-langchain-openai
-langchain-chroma
-langchain-huggingface
+langchain<1
+langchain-openai<1
+langchain-chroma<1
+langchain-huggingface<1
 sentence-transformers
 streamlit
 pdfplumber
 python-docx
 openpyxl
 python-pptx
+mcp>=1.28.1,<2
+keyring>=25
