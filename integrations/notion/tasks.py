@@ -1,10 +1,11 @@
 import json
 import re
-from pathlib import Path
 from urllib.parse import urlparse
 
+from config.paths import NOTION_CONFIG_PATH
 
-CONFIG_PATH = Path(__file__).with_name(".notion_config.json")
+
+CONFIG_PATH = NOTION_CONFIG_PATH
 DATA_SOURCE_URL_PREFIX = "collection://"
 STATUS_OPTIONS = ("미착수", "진행 중", "완료", "보류")
 PROPERTY_NAMES = {

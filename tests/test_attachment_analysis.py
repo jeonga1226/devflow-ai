@@ -7,7 +7,7 @@ from unittest.mock import patch
 from docx import Document
 from openpyxl import Workbook
 
-from attachment_analysis import (
+from ai.attachment_analysis import (
     build_attachment_analysis_prompt,
     extract_attachment,
     format_extracted_content,
@@ -104,7 +104,7 @@ class AttachmentExtractionTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        with patch("attachment_analysis.mailbox_dirs", return_value=(raw_dir, attachment_root)):
+        with patch("ai.attachment_analysis.mailbox_dirs", return_value=(raw_dir, attachment_root)):
             attachments = list_mail_attachments("INBOX", mail_uid="42")
 
         self.assertEqual([item["filename"] for item in attachments], ["safe.txt"])
@@ -172,7 +172,7 @@ class AttachmentExtractionTests(unittest.TestCase):
             "tables": [],
             "warnings": [],
         }
-        with patch("attachment_analysis.extract_attachment", return_value=extraction):
+        with patch("ai.attachment_analysis.extract_attachment", return_value=extraction):
             result = retrieve_relevant_attachment_chunks(
                 [{"path": self.root / "report.pdf"}],
                 "페이지 내용",

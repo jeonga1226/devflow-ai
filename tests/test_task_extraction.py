@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from task_extraction import (
+from ai.task_extraction import (
     build_task_extraction_prompt,
     extract_tasks_from_email,
     is_task_extraction_request,

@@ -1,7 +1,6 @@
 # ingest.py
 import json
 import shutil
-from pathlib import Path
 
 from chromadb.api.client import SharedSystemClient
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -9,9 +8,8 @@ from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
-from fetch_mail import fetch_and_save_mails, sanitize_mailbox, MAILBOX
-
-CHROMA_ROOT = Path(__file__).parent / "chroma_db"
+from config.paths import CHROMA_ROOT
+from integrations.mail.fetch_mail import fetch_and_save_mails, mailbox_dirs, sanitize_mailbox, MAILBOX
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=500,
@@ -63,8 +61,6 @@ def build_vectordb(chunks, persist_dir):
 
 def ingest_mailbox(mailbox):
     """메일함 하나를 fetch하고 해당 메일함 전용 벡터DB를 빌드/갱신"""
-    from fetch_mail import mailbox_dirs
-
     saved, total = fetch_and_save_mails(mailbox=mailbox)
     print(f"[{mailbox}] 전체 {total}개 메일 중 {saved}개 신규 저장 완료")
 

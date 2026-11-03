@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from notion_tasks import (
+from integrations.notion.tasks import (
     STATUS_OPTIONS,
     attach_existing_database,
     create_database,
@@ -165,7 +165,7 @@ class NotionTaskMappingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / ".notion_config.json"
             client = FakeClient()
-            with patch("notion_tasks.CONFIG_PATH", config_path):
+            with patch("integrations.notion.tasks.CONFIG_PATH", config_path):
                 response = create_database(client, "parent-id")
                 saved_config = json.loads(config_path.read_text(encoding="utf-8"))
 
@@ -190,7 +190,7 @@ class NotionTaskMappingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / ".notion_config.json"
-            with patch("notion_tasks.CONFIG_PATH", config_path):
+            with patch("integrations.notion.tasks.CONFIG_PATH", config_path):
                 config = attach_existing_database(FakeClient(), "parent-1")
 
         self.assertEqual(config["database_id"], "database-1")

@@ -49,17 +49,30 @@ Streamlit이 출력하는 로컬 주소(보통 `http://localhost:8501`)를 브�
 필요한 작업을 각각 실행할 수도 있습니다.
 
 ```bash
-python fetch_mail.py   # 기본 메일함에서 메일을 가져와 JSON으로 저장
-python ingest.py       # 기본 메일함을 가져온 뒤 벡터 DB 생성
+python -m integrations.mail.fetch_mail   # 기본 메일함에서 메일을 가져와 JSON으로 저장
+python -m services.ingest                # 기본 메일함을 가져온 뒤 벡터 DB 생성
 ```
 
 ## 5. 처리 흐름과 저장 위치
 
-1. `fetch_mail.py`가 IMAP으로 메일함을 열고 메일 본문과 헤더를 읽습니다.
+1. `integrations/mail/fetch_mail.py`가 IMAP으로 메일함을 열고 메일 본문과 헤더를 읽습니다.
 2. 새 메일의 JSON은 `data/raw/<메일함>/`에, 첨부파일은 `data/attachments/<메일함>/<UID>/`에 저장합니다.
-3. `ingest.py`가 JSON의 본문을 500자 단위(청크 간 중첩 80자)로 나누고 임베딩합니다.
-4. Chroma 벡터 DB는 `chroma_db/<메일함>/`에 저장됩니다.
+3. `services/ingest.py`가 JSON의 본문을 500자 단위(청크 간 중첩 80자)로 나누고 임베딩합니다.
+4. Chroma 벡터 DB는 `data/chroma_db/<메일함>/`에 저장됩니다.
 5. 챗봇은 질문과 관련된 상위 4개 청크를 검색해 답변을 생성하고, 참고한 메일 제목·발신자·날짜를 화면에 표시합니다.
+
+## 프로젝트 구조
+
+```text
+ai/                    첨부파일 분석 및 업무 추출
+config/                공통 경로와 설정
+data/                  메일 원본, 첨부파일, Chroma 인덱스
+integrations/mail/      IMAP 메일 수집
+integrations/notion/   Notion Remote MCP 클라이언트와 업무 저장소
+services/               메일 수집·임베딩·인덱싱 서비스
+tests/                  단위 테스트
+chatbot.py              Streamlit 실행 진입점
+```
 
 채팅에서 메일함을 검색하면 답변 아래 **참고한 메일**과 첨부파일 목록이 표시됩니다. 메일 검색 후 `업무를 JSON으로 추출해줘`라고 입력하면 최근 검색된 메일 원문과 첨부파일 텍스트를 분석해 업무를 추출합니다. 반환 항목은 `task_title`, `project`, `task_type`, `description`, `priority`, `assignee`, `due_date`, `source_email`, `confidence`이며, `source_email`은 원문 `message_id`를 사용합니다. 확인할 수 없는 담당자와 일정은 `null`, 실행 가능한 업무가 없으면 빈 배열을 반환합니다. 한 건이면 JSON 객체 하나, 여러 건이면 동일 스키마의 JSON 배열을 화면에 표시합니다.
 
@@ -82,7 +95,7 @@ Streamlit 사이드바의 **Notion 업무**에서 공식 Remote Notion MCP 연�
 
 ## 7. 개인정보 및 보안
 
-메일 JSON, 첨부파일, 벡터 DB에는 업무상 민감한 정보가 포함될 수 있습니다. 이 데이터는 프로젝트의 `data/`와 `chroma_db/`에 로컬 파일로 저장되므로 접근 권한과 백업·삭제 정책을 관리하세요. 메일 질문의 검색 문맥은 답변 생성을 위해 OpenAI API로 전송됩니다. 첨부 상세 검색 시 질문과 관련 청크가, 업무 추출 시 검색된 메일 원문과 추출 가능한 첨부 텍스트가 OpenAI API로 전송됩니다. Notion MCP로 업무를 등록·수정하면 업무 속성이 Notion에 저장됩니다. 조직의 데이터 처리 정책과 외부 전송 허용 범위를 확인하세요.
+메일 JSON, 첨부파일, 벡터 DB에는 업무상 민감한 정보가 포함될 수 있습니다. 이 데이터는 프로젝트의 `data/` 아래에 로컬 파일로 저장되므로 접근 권한과 백업·삭제 정책을 관리하세요. 메일 질문의 검색 문맥은 답변 생성을 위해 OpenAI API로 전송됩니다. 첨부 상세 검색 시 질문과 관련 청크가, 업무 추출 시 검색된 메일 원문과 추출 가능한 첨부 텍스트가 OpenAI API로 전송됩니다. Notion MCP로 업무를 등록·수정하면 업무 속성이 Notion에 저장됩니다. 조직의 데이터 처리 정책과 외부 전송 허용 범위를 확인하세요.
 
 ## 8. 문제 해결
 

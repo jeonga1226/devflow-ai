@@ -15,7 +15,7 @@ from openpyxl import load_workbook
 from pptx import Presentation
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from fetch_mail import mailbox_dirs
+from integrations.mail.fetch_mail import mailbox_dirs
 
 
 MAX_FILE_SIZE = 25 * 1024 * 1024

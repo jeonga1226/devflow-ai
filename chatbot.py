@@ -9,18 +9,17 @@ from langchain.memory import ConversationBufferWindowMemory
 
 from dotenv import load_dotenv
 
-from ingest import embedding, ingest_mailbox
-from attachment_analysis import (
+from ai.attachment_analysis import (
     build_attachment_analysis_prompt,
     extract_attachment,
     format_extracted_content,
     list_mail_attachments,
     retrieve_relevant_attachment_chunks,
 )
-from fetch_mail import mailbox_dirs
-from task_extraction import extract_tasks_from_email, is_task_extraction_request
-from notion_mcp_client import NotionMcpClient
-from notion_tasks import (
+from ai.task_extraction import extract_tasks_from_email, is_task_extraction_request
+from integrations.mail.fetch_mail import mailbox_dirs
+from integrations.notion.mcp_client import NotionMcpClient
+from integrations.notion.tasks import (
     STATUS_OPTIONS,
     check_task_duplicates,
     create_database,
@@ -29,6 +28,7 @@ from notion_tasks import (
     query_tasks,
     update_task_status,
 )
+from services.ingest import embedding, ingest_mailbox
 
 load_dotenv()
 

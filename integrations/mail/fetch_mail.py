@@ -9,9 +9,9 @@ import re
 
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 
 from dotenv import load_dotenv
+from config.paths import ATTACHMENTS_ROOT, MAIL_DATA_ROOT
 
 load_dotenv()
 
@@ -20,8 +20,6 @@ IMAP_PORT = int(os.getenv("GROUPWARE_IMAP_PORT", "993"))
 IMAP_USER = os.getenv("GROUPWARE_EMAIL")
 IMAP_PASSWORD = os.getenv("GROUPWARE_PASSWORD")
 MAILBOX = os.getenv("GROUPWARE_MAILBOX", "INBOX")
-
-DATA_ROOT = Path(__file__).parent / "data"
 
 
 def sanitize_mailbox(mailbox):
@@ -33,8 +31,8 @@ def mailbox_dirs(mailbox):
     """메일함별로 분리된 raw/attachments 저장 경로를 반환"""
     safe_name = sanitize_mailbox(mailbox)
     return (
-        DATA_ROOT / "raw" / safe_name,
-        DATA_ROOT / "attachments" / safe_name,
+        MAIL_DATA_ROOT / safe_name,
+        ATTACHMENTS_ROOT / safe_name,
     )
 
 
