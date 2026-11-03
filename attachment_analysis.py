@@ -4,6 +4,7 @@ import io
 import json
 import mimetypes
 import math
+import re
 import zipfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -159,7 +160,7 @@ def _read_pdf(path):
         for page_number, page in enumerate(pdf.pages[:MAX_PDF_PAGES], start=1):
             page_text = page.extract_text()
             if page_text:
-                text_pages.append(page_text)
+                text_pages.append(f"[{page_number}페이지]\n{page_text}")
             for table_number, table in enumerate(page.extract_tables() or [], start=1):
                 rows = [
                     [cell or "" for cell in row[:MAX_COLUMNS]]
@@ -320,10 +321,15 @@ def retrieve_relevant_attachment_chunks(attachments, question, embedding, top_k=
         if not content:
             continue
         for text in ATTACHMENT_SPLITTER.split_text(content):
+            pages = sorted({
+                int(page_number)
+                for page_number in re.findall(r"(?:\[|^)(\d+)페이지", text, re.MULTILINE)
+            })
             candidate_chunks.append({
                 "text": text,
                 "filename": metadata["filename"],
                 "detected_type": metadata["detected_type"],
+                "pages": pages,
             })
 
     if not candidate_chunks:

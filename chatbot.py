@@ -79,7 +79,27 @@ def render_search_results(message, search_id):
     if not results:
         return
 
-    analyses = st.session_state.setdefault("mail_attachment_analyses", {})
+    attachments_by_mail = {}
+    for result in results:
+        source_name = os.path.basename(result.get("source", ""))
+        mail_uid = os.path.splitext(source_name)[0]
+        attachments_by_mail[mail_uid] = list_mail_attachments(
+            st.session_state.mailbox,
+            mail_uid,
+        )
+    attachment_mail_count = sum(bool(items) for items in attachments_by_mail.values())
+    guidance = (
+        f"> 총 {len(results)}건의 메일을 찾았습니다.\n"
+        f"> 첨부파일이 포함된 메일은 {attachment_mail_count}건입니다.\n"
+        "> 메일 본문뿐 아니라 첨부파일의 상세 내용도 검색할 수 있습니다."
+    )
+    if attachment_mail_count:
+        guidance += (
+            "\n\n> 선택한 메일에 첨부된 파일의 내용을 검색할 수 있습니다.\n"
+            "> 어떤 내용을 찾으시나요?"
+        )
+    st.markdown(guidance)
+
     with st.expander("참고한 메일"):
         for result in results:
             st.markdown(
@@ -87,71 +107,32 @@ def render_search_results(message, search_id):
             )
             source_name = os.path.basename(result.get("source", ""))
             mail_uid = os.path.splitext(source_name)[0]
-            attachments = list_mail_attachments(st.session_state.mailbox, mail_uid)
+            attachments = attachments_by_mail.get(mail_uid, [])
             if not attachments:
                 continue
 
             st.caption("첨부파일: " + ", ".join(item["filename"] for item in attachments))
-            analysis_key = f"{search_id}:{mail_uid}"
-            if st.button(
-                "이 메일의 첨부파일 검색 요청",
-                key=f"attachment_search_{search_id}_{mail_uid}",
-            ):
-                try:
-                    with st.spinner("이 메일의 첨부파일에서 질문 관련 내용을 찾고 있습니다..."):
-                        retrieval = retrieve_relevant_attachment_chunks(
-                            attachments,
-                            message["search_query"],
-                            embedding,
-                            top_k=4,
-                        )
-                        answer = None
-                        if retrieval["chunks"]:
-                            analysis_prompt = build_attachment_analysis_prompt(
-                                message["search_query"],
-                                retrieval["chunks"],
-                            )
-                            response = ChatOpenAI(
-                                temperature=0,
-                                model_name="gpt-4.1-mini",
-                            ).invoke(analysis_prompt)
-                            answer = response.content
-                            if not isinstance(answer, str):
-                                answer = str(answer)
-                        analyses[analysis_key] = {
-                            "files": retrieval["files"],
-                            "chunks": retrieval["chunks"],
-                            "answer": answer,
-                        }
-                except Exception as error:
-                    st.error(f"첨부파일 분석 요청에 실패했습니다: {error}")
 
-            analysis = analyses.get(analysis_key)
-            if analysis:
-                st.markdown("**첨부파일 메타데이터**")
-                st.dataframe(
-                    [
-                        {
-                            "파일명": file["filename"],
-                            "유형": file["detected_type"],
-                            "크기(bytes)": file["size_bytes"],
-                        }
-                        for file in analysis["files"]
-                    ],
-                    hide_index=True,
-                    use_container_width=True,
-                )
-                if analysis["chunks"]:
-                    st.markdown("**GPT에 전달된 관련 첨부 청크**")
-                    for chunk in analysis["chunks"]:
-                        st.caption(
-                            f"{chunk['filename']} · 코사인 유사도 {chunk['score']:.3f}"
-                        )
-                        st.write(chunk["text"])
-                    st.markdown("**첨부파일 분석 결과**")
-                    st.markdown(analysis["answer"])
-                else:
-                    st.warning("지원되는 내용이나 질문과 관련된 청크를 찾지 못했습니다.")
+
+def render_attachment_results(message):
+    chunks = message.get("attachment_chunks", [])
+    if not chunks:
+        return
+
+    st.markdown(
+        f"> 첨부파일에서 관련 내용을 {len(chunks)}건 찾았습니다.\n"
+        "> 파일명과 페이지 정보를 함께 표시했습니다."
+    )
+    st.markdown("**첨부파일 분석 결과**")
+    st.markdown(message["content"])
+    for chunk in chunks:
+        page_info = (
+            f"{', '.join(str(page) for page in chunk['pages'])}페이지"
+            if chunk["pages"]
+            else "페이지 정보 없음"
+        )
+        st.caption(f"{chunk['filename']} · {page_info}")
+        st.write(chunk["text"])
 
 if "messages" not in st.session_state.keys():
     st.session_state.messages = [
@@ -160,7 +141,10 @@ if "messages" not in st.session_state.keys():
 
 for message_index, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
-        st.write(message["content"])
+        if message.get("attachment_chunks"):
+            render_attachment_results(message)
+        else:
+            st.write(message["content"])
         render_search_results(message, message_index)
 
 user_prompt = st.chat_input()
@@ -171,37 +155,92 @@ if user_prompt is not None:
         st.write(user_prompt)
 
 if st.session_state.messages[-1]["role"] != "assistant":
-    with st.chat_message("assistant"):
-        with st.spinner("메일함 검색 중..."):
-            docs = retriever.invoke(user_prompt)
-            context = "\n\n".join(
-                f"제목: {doc.metadata.get('title', '')}\n"
-                f"보낸사람: {doc.metadata.get('from', '')}\n"
-                f"날짜: {doc.metadata.get('date', '')}\n"
-                f"내용: {doc.page_content}"
-                for doc in docs
-            )
-            ai_response = llm_chain.predict(question=user_prompt, context=context)
-            st.write(ai_response)
-            search_results = []
-            seen_sources = set()
-            for doc in docs:
-                source = doc.metadata.get("source", "")
-                if source in seen_sources:
-                    continue
-                seen_sources.add(source)
-                search_results.append({
-                    "source": source,
-                    "title": doc.metadata.get("title") or "(제목 없음)",
-                    "from": doc.metadata.get("from", ""),
-                    "date": doc.metadata.get("date", ""),
-                })
-            new_ai_message = {
-                "role": "assistant",
-                "content": ai_response,
-                "search_query": user_prompt,
-                "search_results": search_results,
-            }
-            search_id = len(st.session_state.messages)
-            render_search_results(new_ai_message, search_id)
+    previous_mail_search = (
+        st.session_state.messages[-2]
+        if len(st.session_state.messages) > 1
+        and st.session_state.messages[-2].get("attachment_followup")
+        else None
+    )
+    if previous_mail_search:
+        attachments = []
+        for result in previous_mail_search["search_results"]:
+            source_name = os.path.basename(result.get("source", ""))
+            mail_uid = os.path.splitext(source_name)[0]
+            attachments.extend(list_mail_attachments(st.session_state.mailbox, mail_uid))
+
+        with st.chat_message("assistant"):
+            with st.spinner("선택한 메일의 첨부파일을 검색하고 있습니다..."):
+                retrieval = retrieve_relevant_attachment_chunks(
+                    attachments,
+                    user_prompt,
+                    embedding,
+                    top_k=4,
+                )
+                chunks = retrieval["chunks"]
+                answer = ""
+                if chunks:
+                    analysis_prompt = build_attachment_analysis_prompt(user_prompt, chunks)
+                    response = ChatOpenAI(
+                        temperature=0,
+                        model_name="gpt-4.1-mini",
+                    ).invoke(analysis_prompt)
+                    answer = response.content
+                    if not isinstance(answer, str):
+                        answer = str(answer)
+
+            if chunks:
+                new_ai_message = {
+                    "role": "assistant",
+                    "content": answer,
+                    "attachment_chunks": chunks,
+                }
+                render_attachment_results(new_ai_message)
+            else:
+                no_results = (
+                    "해당 메일의 첨부파일에서 관련 내용을 찾지 못했습니다.\n\n"
+                    "첨부파일이 정상적으로 분석되었는지 확인하거나 다른 키워드로 검색해 주세요."
+                )
+                st.markdown(no_results)
+                new_ai_message = {"role": "assistant", "content": no_results}
+    else:
+        with st.chat_message("assistant"):
+            with st.spinner("메일함 검색 중..."):
+                docs = retriever.invoke(user_prompt)
+                context = "\n\n".join(
+                    f"제목: {doc.metadata.get('title', '')}\n"
+                    f"보낸사람: {doc.metadata.get('from', '')}\n"
+                    f"날짜: {doc.metadata.get('date', '')}\n"
+                    f"내용: {doc.page_content}"
+                    for doc in docs
+                )
+                ai_response = llm_chain.predict(question=user_prompt, context=context)
+                st.write(ai_response)
+                search_results = []
+                seen_sources = set()
+                for doc in docs:
+                    source = doc.metadata.get("source", "")
+                    if source in seen_sources:
+                        continue
+                    seen_sources.add(source)
+                    search_results.append({
+                        "source": source,
+                        "title": doc.metadata.get("title") or "(제목 없음)",
+                        "from": doc.metadata.get("from", ""),
+                        "date": doc.metadata.get("date", ""),
+                    })
+                attachment_followup = any(
+                    list_mail_attachments(
+                        st.session_state.mailbox,
+                        os.path.splitext(os.path.basename(result.get("source", "")))[0],
+                    )
+                    for result in search_results
+                )
+                new_ai_message = {
+                    "role": "assistant",
+                    "content": ai_response,
+                    "search_query": user_prompt,
+                    "search_results": search_results,
+                    "attachment_followup": attachment_followup,
+                }
+                render_search_results(new_ai_message, len(st.session_state.messages))
     st.session_state.messages.append(new_ai_message)
