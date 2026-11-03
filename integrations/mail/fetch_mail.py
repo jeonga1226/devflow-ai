@@ -8,7 +8,7 @@ import os
 import re
 
 from email.header import decode_header
-from email.utils import parsedate_to_datetime
+from email.utils import getaddresses, parsedate_to_datetime
 
 from dotenv import load_dotenv
 from config.paths import ATTACHMENTS_ROOT, MAIL_DATA_ROOT
@@ -79,6 +79,56 @@ def decode_mime_words(value):
         else:
             decoded.append(text)
     return "".join(decoded)
+
+
+def format_recipients(header_value):
+    recipients = []
+    for display_name, address in getaddresses([header_value or ""]):
+        display_name = decode_mime_words(display_name).strip()
+        if display_name:
+            recipients.append(display_name)
+    return "; ".join(recipients)
+
+
+def _update_existing_mail_recipient(conn, uid, filepath):
+    try:
+        mail_data = json.loads(filepath.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if mail_data.get("to"):
+        normalized_recipients = format_recipients(mail_data["to"])
+        if normalized_recipients != mail_data["to"]:
+            mail_data["to"] = normalized_recipients
+            filepath.write_text(
+                json.dumps(mail_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        return
+
+    status, header_data = conn.uid(
+        "fetch",
+        uid,
+        "(BODY.PEEK[HEADER.FIELDS (TO)])",
+    )
+    if status != "OK" or not header_data:
+        return
+    raw_header = next(
+        (
+            part[1]
+            for part in header_data
+            if isinstance(part, tuple) and isinstance(part[1], (bytes, bytearray))
+        ),
+        None,
+    )
+    if raw_header is None:
+        return
+
+    message = email.message_from_bytes(raw_header)
+    mail_data["to"] = format_recipients(message.get("To", ""))
+    filepath.write_text(
+        json.dumps(mail_data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def strip_html(html):
@@ -192,6 +242,7 @@ def fetch_and_save_mails(mailbox=None, limit=None):
     for uid in uids:
         filepath = output_dir / f"{uid.decode()}.json"
         if filepath.exists():
+            _update_existing_mail_recipient(conn, uid, filepath)
             continue
 
         status, msg_data = conn.uid("fetch", uid, "(BODY.PEEK[])")
@@ -211,6 +262,7 @@ def fetch_and_save_mails(mailbox=None, limit=None):
 
         subject = decode_mime_words(msg.get("Subject", ""))
         sender = decode_mime_words(msg.get("From", ""))
+        recipients = format_recipients(msg.get("To", ""))
         try:
             date = parsedate_to_datetime(msg.get("Date", "")).isoformat()
         except (TypeError, ValueError):
@@ -227,6 +279,7 @@ def fetch_and_save_mails(mailbox=None, limit=None):
                 {
                     "title": subject,
                     "from": sender,
+                    "to": recipients,
                     "date": date,
                     "message_id": message_id,
                     "attachments": attachments,

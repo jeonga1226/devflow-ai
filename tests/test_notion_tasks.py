@@ -32,6 +32,7 @@ class NotionTaskMappingTests(unittest.TestCase):
         ddl = database_schema()
         self.assertIn('"업무명" TITLE', ddl)
         self.assertIn('"상태" STATUS(', ddl)
+        self.assertNotIn('"신뢰도"', ddl)
 
     def test_maps_extracted_task_to_notion_properties(self):
         properties = task_properties({
@@ -43,13 +44,13 @@ class NotionTaskMappingTests(unittest.TestCase):
             "assignee": None,
             "due_date": None,
             "source_email": "mail-id",
-            "confidence": 0.95,
         })
 
         self.assertEqual(properties["업무명"], "부서 검색 기능 추가")
         self.assertEqual(properties["상태"], "미착수")
         self.assertNotIn("담당자", properties)
         self.assertEqual(properties["원본 메일"], "mail-id")
+        self.assertNotIn("신뢰도", properties)
 
     def test_formats_page_date_property_for_notion_mcp(self):
         properties = task_page_properties({

@@ -242,6 +242,7 @@ def load_task_sources(search_message):
             "source_email": mail_data.get("message_id") or mail_uid,
             "title": mail_data.get("title", ""),
             "from": mail_data.get("from", ""),
+            "to": mail_data.get("to", ""),
             "date": mail_data.get("date", ""),
             "content": mail_data.get("content", ""),
             "attachments": attachments,

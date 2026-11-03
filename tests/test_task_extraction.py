@@ -40,7 +40,6 @@ class TaskExtractionTests(unittest.TestCase):
                 "assignee": None,
                 "due_date": None,
                 "source_email": "model-invented-id",
-                "confidence": 0.95,
             }]
         }
 
@@ -61,13 +60,39 @@ class TaskExtractionTests(unittest.TestCase):
                 "assignee",
                 "due_date",
                 "source_email",
-                "confidence",
             ],
         )
         self.assertEqual(tasks[0]["source_email"], "stored-message-id")
         self.assertEqual(tasks[0]["priority"], "High")
 
-    def test_parser_skips_empty_tasks_and_clamps_confidence(self):
+    def test_mail_recipients_override_model_assignee(self):
+        response = {
+            "tasks": [{
+                "task_title": "부서 검색 기능 추가",
+                "assignee": "모델이 추측한 담당자",
+            }]
+        }
+
+        tasks = parse_task_extraction_response(
+            response,
+            "mail-id",
+            "홍길동 <hong@example.com>; lee@example.com",
+        )
+
+        self.assertEqual(
+            tasks[0]["assignee"],
+            "홍길동 <hong@example.com>; lee@example.com",
+        )
+
+    def test_missing_mail_recipients_produce_null_assignee(self):
+        tasks = parse_task_extraction_response(
+            {"tasks": [{"task_title": "업무", "assignee": "추측 담당자"}]},
+            "mail-id",
+        )
+
+        self.assertIsNone(tasks[0]["assignee"])
+
+    def test_parser_skips_empty_tasks_and_ignores_extra_fields(self):
         response = {
             "tasks": [
                 {"task_title": ""},
@@ -84,8 +109,8 @@ class TaskExtractionTests(unittest.TestCase):
 
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0]["priority"], "Medium")
-        self.assertEqual(tasks[0]["confidence"], 1.0)
         self.assertIsNone(tasks[0]["due_date"])
+        self.assertNotIn("confidence", tasks[0])
 
     def test_extract_tasks_calls_model_and_returns_empty_when_no_tasks(self):
         class FakeLLM:

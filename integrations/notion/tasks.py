@@ -17,7 +17,6 @@ PROPERTY_NAMES = {
     "assignee": "담당자",
     "due_date": "마감일",
     "source_email": "원본 메일",
-    "confidence": "신뢰도",
     "status": "상태",
 }
 
@@ -67,7 +66,6 @@ def task_properties(task, status="미착수"):
         "assignee": task.get("assignee"),
         "due_date": task.get("due_date"),
         "source_email": task.get("source_email"),
-        "confidence": task.get("confidence"),
         "status": status,
     }
     return {
@@ -96,7 +94,6 @@ def database_properties():
         PROPERTY_NAMES["assignee"]: {"rich_text": {}},
         PROPERTY_NAMES["due_date"]: {"date": {}},
         PROPERTY_NAMES["source_email"]: {"rich_text": {}},
-        PROPERTY_NAMES["confidence"]: {"number": {"format": "number"}},
         PROPERTY_NAMES["status"]: {
             "status": {"options": [{"name": option} for option in STATUS_OPTIONS]}
         },
@@ -120,7 +117,6 @@ def database_schema():
         '"담당자" RICH_TEXT, '
         '"마감일" DATE, '
         '"원본 메일" RICH_TEXT, '
-        '"신뢰도" NUMBER, '
         f'"상태" STATUS({statuses})'
         ')'
     )
@@ -135,7 +131,6 @@ def task_page_properties(task, status="미착수"):
         "우선순위": task.get("priority"),
         "담당자": task.get("assignee"),
         "원본 메일": task.get("source_email"),
-        "신뢰도": task.get("confidence"),
         "상태": status,
     }
     properties = {key: value for key, value in values.items() if value is not None}
