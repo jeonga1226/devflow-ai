@@ -1,3 +1,4 @@
+import json
 import os
 
 import streamlit as st
@@ -11,9 +12,13 @@ from dotenv import load_dotenv
 from ingest import embedding, ingest_mailbox
 from attachment_analysis import (
     build_attachment_analysis_prompt,
+    extract_attachment,
+    format_extracted_content,
     list_mail_attachments,
     retrieve_relevant_attachment_chunks,
 )
+from fetch_mail import mailbox_dirs
+from task_extraction import extract_tasks_from_email, is_task_extraction_request
 
 load_dotenv()
 
@@ -72,6 +77,57 @@ llm_chain = LLMChain(
     memory=st.session_state.memory,
     prompt=prompt,
 )
+
+
+def load_task_sources(search_message):
+    raw_dir, _ = mailbox_dirs(st.session_state.mailbox)
+    sources = []
+    seen_sources = set()
+
+    for result in search_message.get("search_results", []):
+        source_name = os.path.basename(result.get("source", ""))
+        mail_uid = os.path.splitext(source_name)[0]
+        if not mail_uid or mail_uid in seen_sources:
+            continue
+        seen_sources.add(mail_uid)
+
+        try:
+            mail_data = json.loads(
+                (raw_dir / f"{mail_uid}.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            continue
+
+        attachments = []
+        for attachment in list_mail_attachments(st.session_state.mailbox, mail_uid):
+            try:
+                extraction = extract_attachment(attachment["path"])
+                content = format_extracted_content(extraction)
+            except Exception:
+                content = ""
+            if content:
+                attachments.append({
+                    "filename": attachment["filename"],
+                    "content": content,
+                })
+
+        sources.append({
+            "source_email": mail_data.get("message_id") or mail_uid,
+            "title": mail_data.get("title", ""),
+            "from": mail_data.get("from", ""),
+            "date": mail_data.get("date", ""),
+            "content": mail_data.get("content", ""),
+            "attachments": attachments,
+        })
+    return sources
+
+
+def render_task_results(message):
+    if not message.get("task_extraction"):
+        return
+    tasks = message.get("tasks", [])
+    st.markdown("**메일에서 추출한 업무 JSON**")
+    st.json(tasks[0] if len(tasks) == 1 else tasks)
 
 
 def render_search_results(message, search_id):
@@ -141,7 +197,9 @@ if "messages" not in st.session_state.keys():
 
 for message_index, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
-        if message.get("attachment_chunks"):
+        if message.get("task_extraction"):
+            render_task_results(message)
+        elif message.get("attachment_chunks"):
             render_attachment_results(message)
         else:
             st.write(message["content"])
@@ -155,13 +213,58 @@ if user_prompt is not None:
         st.write(user_prompt)
 
 if st.session_state.messages[-1]["role"] != "assistant":
+    recent_mail_search = next(
+        (
+            message
+            for message in reversed(st.session_state.messages[:-1])
+            if message.get("search_results")
+        ),
+        None,
+    )
     previous_mail_search = (
         st.session_state.messages[-2]
         if len(st.session_state.messages) > 1
         and st.session_state.messages[-2].get("attachment_followup")
         else None
     )
-    if previous_mail_search:
+    if is_task_extraction_request(user_prompt):
+        with st.chat_message("assistant"):
+            if not recent_mail_search:
+                message_text = "먼저 업무를 추출할 메일을 검색해 주세요."
+                st.info(message_text)
+                new_ai_message = {
+                    "role": "assistant",
+                    "content": message_text,
+                }
+            else:
+                try:
+                    with st.spinner("메일과 첨부파일에서 업무 요청을 추출하고 있습니다..."):
+                        sources = load_task_sources(recent_mail_search)
+                        task_llm = ChatOpenAI(
+                            temperature=0,
+                            model_name="gpt-4.1-mini",
+                            model_kwargs={
+                                "response_format": {"type": "json_object"}
+                            },
+                        )
+                        tasks = []
+                        for source in sources:
+                            tasks.extend(extract_tasks_from_email(task_llm, source))
+                    new_ai_message = {
+                        "role": "assistant",
+                        "content": "메일에서 추출한 업무 JSON",
+                        "task_extraction": True,
+                        "tasks": tasks,
+                    }
+                    render_task_results(new_ai_message)
+                except Exception as error:
+                    message_text = f"업무 추출에 실패했습니다: {error}"
+                    st.error(message_text)
+                    new_ai_message = {
+                        "role": "assistant",
+                        "content": message_text,
+                    }
+    elif previous_mail_search:
         attachments = []
         for result in previous_mail_search["search_results"]:
             source_name = os.path.basename(result.get("source", ""))
